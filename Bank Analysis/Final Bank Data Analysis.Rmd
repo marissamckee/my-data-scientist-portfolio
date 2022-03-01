@@ -1,0 +1,1436 @@
+---
+title: "Final Project Bank Data Analysis"
+author: "Marissa McKee"
+date: "10/30/2020"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Libraries
+```{r}
+library(MASS)
+library(rcompanion)
+library(e1071)                   
+library(readr)
+library(RColorBrewer)
+library('fastDummies')
+library(missForest)
+library(devtools)
+library(ggplot2)
+library(corrplot)
+library(Hmisc)
+library(DMwR)
+library(caret)  
+library(glmnet)
+library(rpart)
+library(rpart.plot)
+library(rattle)
+library(rcompanion)
+library(tictoc)
+```
+
+# Data Preprocessing 
+## Load Bank Data
+```{r}
+bank = read_csv("C:/Users/mckee/Documents/College/$Graduate School/ADTA 5410/Final Project/bank.txt", 
+                col_types = cols(b_tgt = col_character(), 
+                int_tgt = col_number(), cnt_tgt = col_double(), 
+                demog_homeval = col_number(), demog_inc = col_number(), 
+                rfm1 = col_number(), rfm2 = col_number(), 
+                rfm3 = col_number(), rfm4 = col_number(), 
+                demog_genf = col_character(), demog_genm = col_character(), 
+                dataset = col_character()))
+```
+
+### Analyze a Small Portion of Bank Data
+From looking at the bank data, we can already see there are NA values that we will need to handle. Before manipulating the data, there are 1,060,038 records and 26 variables. Comparing some of the variables to the data dictionary provided, some variables are incorrectly defined. 
+```{r}
+# Look at the first 20 rows
+head(bank,20)
+
+# Identify variables 
+names(bank)
+
+# Identify the number of rows and columns
+dim(bank)
+
+# Structure of the dataset
+str(bank)
+```
+
+## Redefine Variable Data Types
+Caret and other packages don't like 0,1 factor levels and will treat them as numeric. Instead we will use yes/no values to represent 1/0's. There are several variables that are defined incorrectly.  
+```{r}
+#Caret and other packages don't like 0,1 factor levels and will treat them as numeric, lets fix that
+bank$b_tgt=ifelse(bank$b_tgt=="1", "yes", "no")
+bank$demog_ho=ifelse(bank$demog_ho=='1',"yes","no")
+bank$demog_genf=ifelse(bank$demog_genf=="1", "yes","no")
+bank$demog_genm=ifelse(bank$demog_genm=="1", "yes","no")
+
+#Convert factor columns to factors
+cols=c("b_tgt", "cat_input1", "cat_input2","demog_ho","demog_genf", "demog_genm","dataset")
+bank[cols] = lapply(bank[cols], factor)
+
+# Validate the data structure looks good
+str(bank) 
+
+# Validate values are expected 
+head(bank,20)
+```
+
+## Null Handling
+There are NA values that need to be handled. There are a total of 1,608,038 missing values. Removing this many values will severely alter the results of any model, so instead imputation may be the best option. I will impute missing values using the MissForest library. It is a machine learning-based data imputation algorithm that operates on the Random Forest algorithm. The creators of the algorithm, conducted a study in 2011 in which imputation methods were compared on datasets with randomly introduced missing values. MissForest outperformed all other algorithms in all metrics, including KNN-Impute, in some cases by over 50%.
+
+- First, the missing values are filled in using median/mode imputation. 
+
+- Then, we mark the missing values as ‘Predict’ and the others as training rows, which are fed into a Random Forest model trained to predict. The generated prediction for that row is then filled in to produce a transformed dataset.
+
+This process of looping through missing data points repeats several times, each iteration improving on better and better data. It’s like standing on a pile of rocks while continually adding more to raise yourself: the model uses its current position to elevate itself further. Iterations continue until some stopping criteria is met or after a certain number of iterations has elapsed. As a general rule, datasets become well imputed after four to five iterations, but it depends on the size and amount of missing data.
+
+MissForest is robust to noisy data and multicollinearity, since random-forests have built-in feature selection (evaluating entropy and information gain).
+
+```{r}
+# Several columns have null values
+summary(bank)
+
+# There are a total of 1,341,177 missing values. Removing this many values will severely alter the results of any model, so instead imputation may be the best option 
+sum(is.na(bank))
+
+# There are missing values in several columns.  
+colSums(is.na(bank))
+
+# The int_tgt is missing 848,529 values that directly correlates to when b_tgt = 0. Instead of imputing these values I will make them 0.
+bank$int_tgt=ifelse(is.na(bank$int_tgt), 0, bank$int_tgt)
+
+# There is one missing value in the cnt_tgt that I will convert to 0 
+bank$cnt_tgt=ifelse(is.na(bank$cnt_tgt), 0, bank$cnt_tgt)
+
+# Now there are no missing values in the dependent variable   
+colSums(is.na(bank))
+
+# Capture numerical columns for missing value imputation: demog_age, rfm3
+str(bank[,c(6,13)])
+
+# Create indicator column for imputation of demog_age to indicate imputation o the 266,861 missing values 
+bank$demog_age_ind=ifelse(is.na(bank$demog_age), 1, 0)
+
+# Create indicator column for imputation of rfm3 to indicate imputation o the 225,786 missing values 
+bank$rfm3_ind=ifelse(is.na(bank$rfm3), 1, 0)
+
+# Convert 1/0 factor to yes/no
+bank$rfm3_ind=ifelse(bank$rfm3_ind=="1", "yes","no")
+bank$demog_age_ind=ifelse(bank$demog_age_ind=="1", "yes","no")
+
+#Convert factor columns to factors
+cols=c("demog_age_ind", "rfm3_ind")
+bank[cols] = lapply(bank[cols], factor)
+
+#bank.imp=knnImputation(data.frame(bank[,c(2:3,6,8:22)]),k=10) #For KNN we can only use numeric measures to impute the missing value
+#summary(bank.imp)
+
+#Auto.imp=cbind(Auto.imp, Auto[,9])
+#summary(Auto.imp)
+
+# Impute the missing values for all numeric columns using missForest
+#bank.imp=missForest(data.frame(bank[,c(6,8:22)]))
+
+# missforest also provides an OOB imputation error estimate
+#bank.imp$OOBerror 
+
+# Check the bank.imp$ximp for the imputation results
+#summary(bank.imp$ximp)
+
+# Combine the other values into the new dataframe object bank.imp
+#bank.imp=cbind(bank[,c(-6:-7,-13)],bank.imp$ximp)
+
+# Validate other columns were appended 
+#summary(bank.imp)
+
+# Remove records that are highly nulled
+#edu.imp = na.omit(edu.imp) 
+
+# Validate all null values have been imputed 
+#sum(is.na(bank.imp))
+
+# Rows and columns of the imputed dataset
+#dim(bank.imp)
+
+# Remove indicator columns from bank dataset
+#bank = bank[,-27:-28]
+```
+
+## Identify Outliers
+Univariate Data: Outliers are points outside the whiskers in a box plot < 1.5xQ1  or > 1.5xQ3
+```{r}
+# int_tgt outlier detection 
+outlier_values = boxplot.stats(bank$int_tgt)$out 
+outlier_values
+
+# Boxplot containing outlier values of int_tgt
+boxplot(bank$int_tgt, main="Integer Dependent Variable", boxwex=0.1)
+mtext(paste("Outliers: ", paste(outlier_values, collapse=", ")), cex=0.6)
+
+# cnt_tgt outlier detection 
+outlier_values = boxplot.stats(bank$cnt_tgt)$out 
+outlier_values
+
+# Boxplot containing outlier values of cnt_tgt
+boxplot(bank$cnt_tgt, main="Integer Dependent Variable", boxwex=0.1)
+mtext(paste("Outliers: ", paste(outlier_values, collapse=", ")), cex=0.6)
+
+# demog_homeval outlier detection 
+outlier_values = boxplot.stats(bank$demog_homeval)$out 
+outlier_values
+
+names(bank)
+
+# Boxplot containing outlier values of demog_homeval
+boxplot(bank$demog_homeval, main="Box Plot: Outlier Detection - Home Value Variable", boxwex=0.1)
+mtext(paste("Outliers: ", paste(outlier_values, collapse=", ")), cex=0.6)
+```
+
+## Handling Outliers - Univariate Analysis (outlier in one column)
+One of the ways to handle outliers is center and scaling. The preProcess class can be used for many operations on predictors, including centering and scaling. The function preProcess estimates the required parameters for each operation and predict.preProcess is used to apply them to specific data sets. 
+```{r}
+# Center and scale the data 
+bank.preProcValues = preProcess(bank, method = c("center", "scale"))
+bank = predict(bank.preProcValues, bank)
+
+```
+
+## Dependent Variables 
+By plotting the dependent variables, we see that int_tgt and cnt_tgt are skewed to the right. 
+
+The b_tgt is imbalanced. Imbalanced classification is a supervised learning problem where one class outnumbers other class by a large proportion. This problem is faced more frequently in binary classification problems than multi-level classification problems.
+
+The term imbalanced refer to the disparity encountered in the dependent (response) variable. Therefore, an imbalanced classification problem is one in which the dependent variable has imbalanced proportion of classes. In other words, a data set that exhibits an unequal distribution between its classes is considered to be imbalanced.
+
+```{r}
+# Put categorical dependent variable into tables to visualize later
+bdv = table(bank$b_tgt)
+bdv
+
+# add a fun color pallete 
+color = brewer.pal(8, "Set2") 
+
+# Plot the bar chart of b_tgt
+barplot(bdv, col=color, names.arg=c("no","yes"),las=2)
+
+# int_tgt is skewed to the right 
+hist(bank$int_tgt, main = "Histogram of int_tgt", xlab = "Earnings", col="slategray", breaks=50)
+
+# cnt_tgt is skewed to the right 
+hist(bank$cnt_tgt, main = "Histogram of cnt_tgt", xlab = "Earnings", col="plum1", breaks=50) 
+```
+
+## Skewness
+Since we know the dependent variables are skewed we will find how skewed they are using th skewness funciton. If the skewness predictor is between -0.5 and 0.5 then the data is approximately symmetric. The int_tgt is heavily skewed with a skewness metric of 10.5
+
+#### int_tgt Variable Log Transformation 
+```{r}
+# No transformation
+norm_int_tgt = bank$int_tgt
+plotNormalHistogram(norm_int_tgt)
+skewness(norm_int_tgt) #10.58
+
+# Log transformation 
+log_int_tgt = log1p(bank$int_tgt)
+plotNormalHistogram(log_int_tgt)
+skewness(log_int_tgt) # 1.56
+
+# Square root transformation 
+sqrt_int_tgt = sqrt(bank$int_tgt)
+plotNormalHistogram(sqrt_int_tgt)
+skewness(sqrt_int_tgt) # 2.01
+
+# Add the log transformed column to the bank dataframe
+bank$log_int_tgt = log_int_tgt
+
+```
+
+#### cnt_tgt Variable Square Root Transformation 
+```{r}
+# No transformation 
+plotNormalHistogram(bank$cnt_tgt)
+skewness(bank$cnt_tgt) # 2.39
+
+# Log transformation 
+log_cnt_tgt = log1p(bank$cnt_tgt)
+plotNormalHistogram(log_cnt_tgt)
+skewness(log_cnt_tgt) # 1.71
+
+# Square root transformation 
+sqrt_cnt_tgt = sqrt(bank$cnt_tgt)
+plotNormalHistogram(sqrt_cnt_tgt)
+skewness(sqrt_cnt_tgt) # 1.72
+
+# Add the log transformed column to the bank dataframe
+bank$log_cnt_tgt = log_cnt_tgt
+
+```
+
+## Dummy Variables 
+There are several factor variables that will be converted to dummy variables. One dataset will include no dummy variables and the other dataset will include the dummy variables. 
+```{r}
+# Create Dummy variables for regression for bank
+bank = dummy_cols(bank, select_columns = c('cat_input1','cat_input2','demog_ho','demog_genf','demog_genm'))
+names(bank)
+str(bank)
+```
+
+## Create sliced datasets for analysis from the bank data 
+```{r}
+#Convert int columns to numeric
+cols=c("cat_input1_X","cat_input1_Y","cat_input1_Z","cat_input2_A","cat_input2_B","cat_input2_C","cat_input2_D","cat_input2_E","demog_ho_no","demog_ho_yes","demog_genf_no","demog_genf_yes","demog_genm_no","demog_genm_yes")
+bank[cols] = lapply(bank[cols], as.numeric)
+
+# Validate data structure
+names(bank)
+str(bank)
+
+```
+
+# Define Misclassification Function
+The misclass function calculates the confusion matrix and misclassification rate of predicted values vs actual values. This function will be primarily used for classification models. 
+```{r}
+# Define misclassification function
+misclass = function(fit,y) {
+  temp = table(fit,y)
+  cat("Table of Misclassification\n")
+  cat("(row = predicted, col = actual)\n")
+  print(temp)
+  cat("\n\n")
+  numcor = sum(diag(temp))
+  numinc = length(y) - numcor
+  mcr = numinc/length(y)
+  cat(paste("Misclassification Rate = ",format(mcr,digits=3)))
+  cat("\n")
+}
+```
+
+## Split the Data into Three Subsets
+In this problem we will use a training, validation, and testing split of the data. We will split the data into the three separate data sets, and then use the training data sets for all of your model development, the validation to evaluate the results, and the testing data to predict on data the model hasn't seen.
+
+- Training Data Set: 60%
+
+- Validation Data Set: 20%
+
+- Testing Data Set: 20%
+
+```{r}
+####################################################################
+# Bank Data - No Dummies - Centered and Scaled
+####################################################################
+
+#Lets split our data set into the 3 subsets (training, validation, testing)
+bank.train= predict(bank.preProcValues, bank[ which(bank$dataset=='1'),]) 
+bank.val=predict(bank.preProcValues, bank[ which(bank$dataset=='2'),]) 
+bank.test=predict(bank.preProcValues, bank[ which(bank$dataset=='3'),]) 
+
+# Train dimension
+dim(bank.train)
+
+# Validation dimension
+dim(bank.val)
+
+# Test dimension 
+dim(bank.test)
+str(bank)
+
+####################################################################
+# Bank Data - No Dummies 
+####################################################################
+
+#Lets split our data set into the 3 subsets (training, validation, testing)
+bank.train = bank[ which(bank$dataset=='1'),]
+bank.val = bank[ which(bank$dataset=='2'),] 
+bank.test = bank[ which(bank$dataset=='3'),]
+
+# Train dimension
+dim(bank.train)
+
+# Validation dimension
+dim(bank.val)
+
+# Test dimension 
+dim(bank.test)
+str(bank)
+
+```
+
+## Export dataframe to CSV File
+```{r}
+write.csv(bank,"C:\\Users\\mckee\\Documents\\College\\$Graduate School\\ADTA 5410\\Final Project\\bank_data.csv", row.names = FALSE)
+```
+
+
+# Exploratory Data Analysis
+## Explore Categorical Variables
+```{r}
+# Preview the levels/categories of the factor variables 
+levels(bank$b_tgt)
+levels(bank$cat_input1)
+levels(bank$cat_input2)
+levels(bank$demog_ho)
+levels(bank$demog_genf)
+levels(bank$demog_genm)
+levels(bank$dataset)
+
+# Put categorical variables into tables to visualize later
+tcat_input1= table(bank$cat_input1)
+tcat_input2= table(bank$cat_input2)
+tdemog_ho= table(bank$demog_ho)
+tdemog_genf= table(bank$demog_genf)
+tdemog_genm= table(bank$demog_genm)
+tdataset= table(bank$dataset)
+
+# Preview the proportion of categories 
+prop.table(table(bank$b_tgt))          # 80% no
+prop.table(table(bank$cat_input1))     # 78% X
+prop.table(table(bank$cat_input2))     # 35% E
+prop.table(table(bank$demog_ho))       # ??
+prop.table(table(bank$demog_genf))     # 56% yes
+prop.table(table(bank$demog_genm))     # 56 no
+prop.table(table(bank$dataset))        # 60% 1
+```
+
+## Summary Plots
+```{r}
+# Generalized matrix of plots on the first 15 variables
+#ggpairs(bank) 
+```
+
+## Box plots
+```{r}
+# int_tgt by category input 1 account activity level 
+ggplot(data = bank, mapping = aes(x = int_tgt, y = cat_input1)) +labs(y= "Account Activity Level", x = "New Sales") + labs(title = "Boxplot of New Sales by Account Activity Level") + geom_boxplot()
+
+# int_tgt by category input 2 customer value level 
+ggplot(data = bank, mapping = aes(x = int_tgt, y = cat_input2)) +labs(y= "Customer Value Level", x = "New Sales") + labs(title = "Boxplot of New Sales by Customer Value Level") + geom_boxplot()
+
+# int_tgt by homeowner  
+ggplot(data = bank, mapping = aes(x = int_tgt, y = demog_ho)) +labs(y= "Homeowner", x = "New Sales") + labs(title = "Boxplot of New Sales by Homeowner") + geom_boxplot()
+
+# int_tgt by female  
+ggplot(data = bank, mapping = aes(x = int_tgt, y = demog_genf)) +labs(y= "Female", x = "New Sales") + labs(title = "Boxplot of New Sales by Females") + geom_boxplot()
+
+# int_tgt by male  
+ggplot(data = bank, mapping = aes(x = int_tgt, y = demog_genm)) +labs(y= "Male", x = "New Sales") + labs(title = "Boxplot of New Sales by Males") + geom_boxplot()
+
+# int_tgt by home value  
+ggplot(data = bank, mapping = aes(x = int_tgt, y = demog_homeval)) +labs(y= "Home Value", x = "New Sales") + labs(title = "Boxplot of New Sales by Home Value") + geom_boxplot()
+```
+
+## Scatter plots
+```{r}
+#ggplot(data = bank, mapping = aes(x = demog_age, y = int_tgt)) + geom_point()
+ggplot(data = bank, mapping = aes(x = demog_homeval, y = int_tgt)) + geom_point()
+ggplot(data = bank, mapping = aes(x = demog_inc, y = int_tgt)) + geom_point()
+ggplot(data = bank, mapping = aes(x = demog_pr, y = int_tgt)) + geom_point()
+ggplot(data = bank, mapping = aes(x = rfm1, y = int_tgt)) + geom_point()
+ggplot(data = bank, mapping = aes(x = rfm2, y = int_tgt)) + geom_point()
+#ggplot(data = bank, mapping = aes(x = rfm3, y = int_tgt)) + geom_point()
+ggplot(data = bank, mapping = aes(x = rfm4, y = int_tgt)) + geom_point()
+ggplot(data = bank, mapping = aes(x = rfm5, y = int_tgt)) + geom_point()
+ggplot(data = bank, mapping = aes(x = rfm6, y = int_tgt)) + geom_point()
+ggplot(data = bank, mapping = aes(x = rfm7, y = int_tgt)) + geom_point()
+ggplot(data = bank, mapping = aes(x = rfm8, y = int_tgt)) + geom_point()
+ggplot(data = bank, mapping = aes(x = rfm9, y = int_tgt)) + geom_point()
+ggplot(data = bank, mapping = aes(x = rfm10, y = int_tgt)) + geom_point()
+ggplot(data = bank, mapping = aes(x = rfm11, y = int_tgt)) + geom_point()
+ggplot(data = bank, mapping = aes(x = rfm12, y = int_tgt)) + geom_point()
+ggplot(data = bank, mapping = aes(x = account, y = int_tgt)) + geom_point()
+```
+
+## Correlation matrix 
+```{r}
+#Visualize the columns of the correlation matrix
+r = cor(as.matrix(bank[,c(2,3,8,9,10,11,12,14,15,16,17,18,19,20,21,22)]))
+
+# Plot the first 15 columns of the correlation matrix
+#corrplot(r, type='upper',method = "shade", shade.col = NA, p.mat=r$P, tl.col="black", tl.srt = 45,number.cex = 1,addCoef.col = 'blue', order='hclust',sig.level = 0.05, insig = c("pch"), diag = FALSE, col=colorRampPalette(c("deeppink","white","olivedrab2"))(200))
+
+```
+
+## Bar Charts
+#### Account Activity Level
+```{r}
+barplot(tcat_input1, col=color)
+```
+#### Customer Value Level
+```{r}
+barplot(tcat_input2, col=color)
+```
+#### Homeowner 
+```{r}
+barplot(tdemog_ho, col=color)
+```
+#### Female 
+```{r}
+barplot(tdemog_genf, col=color)
+```
+#### Male
+```{r}
+barplot(tdemog_genm, col=color)
+```
+#### New Product
+```{r}
+barplot(bdv, col=color)
+```
+
+## Pie Charts
+#### Account Activity Level
+```{r}
+pie(tcat_input1, col=color)
+```
+#### Customer Value Level
+```{r}
+pie(tcat_input2, col=color)
+```
+#### Homeowner
+```{r}
+pie(tdemog_ho, col=color)
+```
+#### Female
+```{r}
+pie(tdemog_genf, col=color)
+```
+#### Male
+```{r}
+pie(tdemog_genm, col=color)
+```
+#### New Product
+```{r}
+pie(bdv, col=color)
+```
+
+# Enable Parallel Processing 
+The bank data is very large. In order to combat long run times, in this section parallel CPU processing is enabled to run on -1 of the registered cores. Due to the data size and the constraint of my personal laptop, a sample of the training, validation, and testing data sets will be used to perform the various machine learning analysis techniques. 
+```{r}
+#Enable parallel CPU processing
+library(doParallel)
+
+# Detect how many cores the computer has: 4
+detectCores() 
+
+# Select number of cores - 1 to process models 
+cl = makeCluster(3)
+
+# Register 3 core for backend processing 
+registerDoParallel(cl)
+
+# Divide into smaller sampling to train, validate, and test the models 
+dim(bank.train) #636205
+dim(bank.val) #211773
+dim(bank.test) #212060
+
+# Split data into training and testing sets
+sample = sample(1:636205,floor(.006*636205),replace=F)
+train.sample = bank.train[sample,] 
+
+sample = sample(1:211773,floor(.006*211773),replace=F)
+val.sample = bank.val[sample,] 
+
+sample = sample(1:212060,floor(.006*212060),replace=F)
+test.sample = bank.test[sample,] 
+
+# Train dimension
+dim(train.sample)
+
+# Val dimension 
+dim(val.sample)
+
+# Val dimension 
+dim(test.sample)
+
+```
+
+# Classification of New Products
+Develop a classification model for the b_tgt variable using any of the variables as predictors (except account, cnt_tgt, and int_tgt). Fit at least four candidate models using the training data and evaluate the fitted models using the validation data. Once you have selected your final model, generate predictions for the test dataset, and evaluate its performance against the test dataset.
+
+#### Synthetic Data Generation
+In simple words, instead of replicating and adding the observations from the minority class, it overcome imbalances by generates artificial data. It is also a type of oversampling technique.
+
+In regards to synthetic data generation, synthetic minority oversampling technique (SMOTE) is a powerful and widely used method. SMOTE algorithm creates artificial data based on feature space (rather than data space) similarities from minority samples. We can also say, it generates a random set of minority class observations to shift the classifier learning bias towards minority class.
+
+To generate artificial data, it uses bootstrapping and k-nearest neighbors. Precisely, it works this way:
+
+- Take the difference between the feature vector (sample) under consideration and its nearest neighbor.
+
+- Multiply this difference by a random number between 0 and 1
+
+- Add it to the feature vector under consideration
+
+- This causes the selection of a random point along the line segment between two specific features
+
+```{r}
+# Plot the bar chart of b_tgt
+barplot(bdv, col=color, names.arg=c("no","yes"),las=2)
+```
+
+# Classification Model 1
+## KNN
+```{r}
+# Define train control params
+ctrlKNN = trainControl(method = "boot632", 
+                     number = 100, 
+                     selectionFunction = "oneSE",
+                     classProbs = TRUE, 
+                     summaryFunction = twoClassSummary,
+                     sampling = "smote",
+                     allowParallel=TRUE)
+
+# Creates a data frame from all combinations of the supplied factors. Using KNN for classification, set grid to odd values e.g., c(1,3,5,7,9,11,13,15,17,19)
+grid=expand.grid(k=c(1,3,5,7,9,11,13,15,17,19)) 
+
+tic()
+set.seed(1234)
+knn.model = train(b_tgt ~ cat_input1 + cat_input2 + demog_ho + demog_homeval + demog_inc + demog_pr + rfm1 + rfm2 + rfm4 + rfm5 + rfm6 + rfm7 + rfm8 + rfm9 + rfm10 + rfm11 + rfm12 + demog_genf + demog_genm,
+                data = train.sample, 
+                method = "knn",
+                trControl = ctrlKNN,
+                na.action = "na.omit",
+                tuneGrid=grid
+                )
+toc() 
+# MODEL RUN TIME:  175 sec
+# RECORDS TRAINED: 3817
+
+# Model Summary
+# ROC was used to select the optimal model using  the one SE rule.
+# The final value used for the model was k = 19.
+knn.model 
+
+# Predict on training data
+pred.train.knn.model = predict(knn.model, newdata = train.sample)
+misclass(pred.train.knn.model,train.sample$b_tgt)
+
+# Predict on validation data
+pred.val.knn.model = predict(knn.model, newdata = val.sample)
+misclass(pred.val.knn.model,val.sample$b_tgt)
+
+# Predict on test data
+pred.knn.model = predict(knn.model, newdata = test.sample)
+misclass(pred.knn.model,test.sample$b_tgt)
+```
+
+# Classification Model 2
+## Decision Tree
+```{r}
+# Train decision tree model on training data 
+tic()
+set.seed(1234)
+dt.model = rpart(b_tgt ~ cat_input1 + cat_input2 + demog_ho + demog_homeval + demog_inc + demog_pr + rfm1 + rfm2 + rfm4 + rfm5 + rfm6 + rfm7 + rfm8 + rfm9 + rfm10 + rfm11 + rfm12 + demog_genf + demog_genm, data=train.sample)
+toc()
+
+# Decision tree plot
+plot(dt.model)
+text(dt.model)
+
+# Pretty tree plot
+fancyRpartPlot(dt.model)
+
+# Predict on training data
+pred.train.dt.model = predict(dt.model,newdata=train.sample,type="class")
+misclass(pred.train.dt.model,train.sample$b_tgt)
+
+# Decision tree 
+dt.model
+
+# Predict on Validation set 
+pred.val.dt.model = predict(dt.model,newdata=val.sample,type="class")
+plot(pred.val.dt.model)
+misclass(pred.val.dt.model,val.sample$b_tgt)
+
+# Predict Test Values
+pred.dt.model = predict(dt.model,newdata=test.sample,type="class")
+plot(pred.dt.model)
+misclass(pred.dt.model,test.sample$b_tgt)
+```
+
+# Classification Model 3
+## Support Vector Machine
+The support vector machine model is a popular supervised machine learning algorithm used for both classification and regression tasks. The objective of the SVM algorithm is to identify a hyperplane in a dimensional space that classifies the data points. Hyperplanes are decision boundaries that classify the data. Support vectors are data points that are close to the hyperplane, which influences the position and orientation of the hyperplane. 
+
+- A repeated 10 K fold cross validation technique was used to train the model. 
+
+- ROC was used to select the optimal model using the largest value.
+
+- Tuning parameter 'C' was held constant at a value of 1
+
+```{r}
+# Define train control params
+ctrlSVM = trainControl(method = "repeatedcv", 
+                     number = 10, 
+                     repeats=10,
+                     selectionFunction = "best",
+                     classProbs = TRUE, 
+                     summaryFunction = twoClassSummary,
+                     sampling = "smote",
+                     allowParallel=TRUE)
+
+# Train svm model on training data 
+tic()
+set.seed(1234)
+svm.model = train(b_tgt ~ cat_input1 + cat_input2 + demog_ho + demog_homeval + demog_inc + demog_pr + rfm1 + rfm2 + rfm4 + rfm5 + rfm6 + rfm7 + rfm8 + rfm9 + rfm10 + rfm11 + rfm12 + demog_genf + demog_genm,
+                data = train.sample, 
+                method = "svmLinear",
+                trControl = ctrlSVM,
+                na.action = "na.omit",
+                tuneLength=10)
+toc() 
+# MODEL RUN TIME:  68.36 sec
+# RECORDS TRAINED: 3817
+
+# Model summary
+svm.model
+
+# Predict on training data
+pred.train.svm.model = predict(svm.model, newdata = train.sample)
+misclass(pred.train.svm.model,train.sample$b_tgt)
+
+# Predict on validation data
+pred.val.svm.model = predict(svm.model, newdata = val.sample)
+misclass(pred.val.svm.model,val.sample$b_tgt)
+
+# Predict on test data
+pred.svm.model = predict(svm.model, newdata = test.sample)
+misclass(pred.svm.model,test.sample$b_tgt)
+
+```
+
+# Classification Model 4
+## Random Forest
+Random forests are an ensemble learning method and use the bagging algorithm to average the many trees grown on bootstrap samples of the data. Random forests can be used for both prediction and classification problems. The random forest algorithm will be used to classify the binary outcome of new products in the bank data. Random forests are robust models that can handle missing values, outliers, nonlinear or nonnormalized data, and the algorithm is less impacted by noisy data. 
+
+- A repeated 10 K fold cross validation technique was used to train the model. 
+
+- ROC was used to select the optimal model using the largest value.
+
+- The final value used for the model was mtry = 4.
+
+```{r}
+# Define train control params
+ctrlRF = trainControl(method = "repeatedcv", 
+                     number = 10, 
+                     repeats=10,
+                     selectionFunction = "best",
+                     classProbs = TRUE, 
+                     summaryFunction = twoClassSummary,
+                     sampling = "smote",
+                     allowParallel=TRUE)
+
+# Train random forest model on training data 
+tic()
+set.seed(1234)
+rf.model = train(b_tgt ~ cat_input1 + cat_input2 + demog_ho + demog_homeval + demog_inc + demog_pr + rfm1 + rfm2 + rfm4 + rfm5 + rfm6 + rfm7 + rfm8 + rfm9 + rfm10 + rfm11 + rfm12 + demog_genf + demog_genm,
+                 data=train.sample,
+                 method = "rf",
+                 trControl = ctrlRF,
+                 na.action = "na.omit",
+                 linout=TRUE,
+                 tuneLength=10) 
+toc()
+# MODEL RUN TIME:  12816.49   sec
+# RECORDS TRAINED: 3817
+
+# Model summary
+rf.model
+
+summary(rf.model)
+
+# Predict on training data
+pred.train.rf.model = predict(rf.model, newdata = train.sample)
+misclass(pred.train.rf.model,train.sample$b_tgt)
+
+# Predict on validation data
+pred.val.rf.model = predict(rf.model, newdata = val.sample)
+misclass(pred.val.rf.model,val.sample$b_tgt)
+
+# Predict on test data
+pred.rf.model = predict(rf.model, newdata = test.sample)
+misclass(pred.rf.model,test.sample$b_tgt)
+
+```
+
+
+# Prediction of New Sales
+# Prediction Model 1
+## Partial Least Squares 
+Partial least squares is a dimension reduction technique that identifies a new set of features that are linear combinations of the original features. The partial least squares approach attempts to find directions that help explain both the response and the predictors. The partial least squares algorithm will be used to predict the interval of new sales in the bank data.
+
+- A repeated 10 K fold cross validation technique was used to train the model. 
+
+- RMSE was used to select the optimal model using the smallest value.
+
+- The final value used for the model was ncomp = 5.
+
+- The 5 components make up over half of the explained variance in the model 
+
+```{r}
+# Define train control params
+ctrlPLS = trainControl(method = "repeatedcv", 
+                     number = 10, 
+                     repeats=10,
+                     selectionFunction = "best",
+                     allowParallel=TRUE)
+
+# Train model on training data 
+tic()
+set.seed(4321)
+pls.model = train(log_int_tgt ~ demog_homeval + demog_inc + demog_pr + rfm1 + rfm2 + rfm4 + rfm5 + rfm6 + rfm7 + rfm8 + rfm9 + rfm10 + rfm11 + rfm12 + cat_input1_X + cat_input1_Y + cat_input1_Z + cat_input2_A + cat_input2_B + cat_input2_C + cat_input2_D + cat_input2_E + demog_ho_yes + demog_genf_yes + demog_genm_yes,
+                data = train.sample, 
+                method = "pls",
+                trControl = ctrlPLS,
+                tuneGrid=NULL,
+                na.action = "na.omit",
+                tuneLength=20)
+toc()
+# MODEL RUN TIME:  4.94 sec
+# RECORDS TRAINED: 3817
+
+# Model summary
+pls.model 
+
+summary(pls.model)
+
+# Predict on training data
+pred.train.pls.model = predict(pls.model, newdata = train.sample)
+
+# Calculate the MSE and plot 
+pls.train.mse = mean((pred.train.pls.model - train.sample$log_int_tgt)^2)
+pls.train.mse
+
+# Plot MSE
+plot(train.sample$log_int_tgt, pred.train.pls.model, main = "Predictions vs Actual", xlab = "Actual", ylab = "Predictions", pch = 19, col = "blue")
+
+# Calculate the RMSE 
+pls.train.rmse = RMSE(train.sample$log_int_tgt, pred.train.pls.model)
+pls.train.rmse
+
+# Model performance metrics
+data.frame(
+  RMSE = caret::RMSE(pred.train.pls.model, train.sample$log_int_tgt),
+  Rsquare = caret::R2(pred.train.pls.model, train.sample$log_int_tgt),
+  MSE = mean((pred.train.pls.model - train.sample$log_int_tgt)^2)
+)
+
+# Predict on validation data
+pred.val.pls.model = predict(pls.model, newdata = val.sample)
+
+# Calculate the MSE and plot 
+pls.val.mse = mean((pred.val.pls.model - val.sample$log_int_tgt)^2)
+pls.val.mse
+
+# Plot MSE
+plot(val.sample$log_int_tgt, pred.val.pls.model, main = "Predictions vs Actual", xlab = "Actual", ylab = "Predictions", pch = 19, col = "blue")
+
+# Calculate the RMSE 
+pls.val.rmse = RMSE(val.sample$log_int_tgt, pred.val.pls.model)
+pls.val.rmse
+
+# Model performance metrics
+data.frame(
+  RMSE = caret::RMSE(pred.val.pls.model, val.sample$log_int_tgt),
+  Rsquare = caret::R2(pred.val.pls.model, val.sample$log_int_tgt),
+  MSE = mean((pred.val.pls.model - val.sample$log_int_tgt)^2)
+)
+
+# Predict on test data
+pred.pls.model = predict(pls.model, newdata = test.sample)
+
+# Calculate the MSE and plot 
+pls.mse = mean((pred.pls.model - test.sample$log_int_tgt)^2)
+pls.mse
+
+# Plot MSE
+plot(test.sample$log_int_tgt, pred.pcr.model, main = "Predictions vs Actual", xlab = "Actual", ylab = "Predictions", pch = 19, col = "blue")
+
+# Calculate the RMSE 
+pls.rmse = RMSE(test.sample$log_int_tgt, pred.pls.model)
+pls.rmse
+
+# Model performance metrics
+data.frame(
+  RMSE = caret::RMSE(pred.pls.model, test.sample$log_int_tgt),
+  Rsquare = caret::R2(pred.pls.model, test.sample$log_int_tgt),
+  MSE = mean((pred.pls.model - test.sample$log_int_tgt)^2)
+)
+```
+
+# Prediction Model 2
+## Neural Network
+Neural networks are complex interconnected networks of neurons. Neural network architecture is often compared to the human brain and how it is structured to learn new information. The artificial neural network algorithm will be used to predict the interval of new sales in the bank data. Artificial neural networks are not only capable of modeling linear relationships but nonlinear relationships too. 
+
+- A 10 K fold cross validation technique was used to train the model. 
+
+- RMSE was used to select the optimal model using the smallest value.
+
+- Decay: 0.5, 0.4, 0.3, 0.2, 0.1
+
+- Size: 1, 2, 3, 4, 5, 6
+
+- The final values used for the model were size = 5 and decay = 0.1.
+
+```{r}
+# Define train control params
+ctrlNN = trainControl(method = "cv", 
+                     number = 10, 
+                     selectionFunction = "best",
+                     allowParallel=TRUE)
+
+# Optimize the ANN hyperpameters and print the results
+mygrid = expand.grid(.decay = c(0.5, 0.4, 0.3, 0.2, 0.1), .size = c(1, 2, 3, 4, 5, 6))
+
+# Train model on training data 
+tic()
+set.seed(4321)
+nnet.model = train(log_int_tgt ~ demog_homeval + demog_inc + demog_pr + rfm1 + rfm2 + rfm4 + rfm5 + rfm6 + rfm7 + rfm8 + rfm9 + rfm10 + rfm11 + rfm12 + cat_input1_X + cat_input1_Y + cat_input1_Z + cat_input2_A + cat_input2_B + cat_input2_C + cat_input2_D + cat_input2_E + demog_ho_yes + demog_genf_yes + demog_genm_yes,
+                data = train.sample, 
+                method = "nnet",
+                trControl = ctrlNN,
+                tuneGrid = mygrid,
+                maxit = 1000, 
+                na.action = "na.omit",
+                tuneLength=10)
+toc()
+# MODEL RUN TIME:  14.75 sec
+# RECORDS TRAINED: 3817
+
+# Model summary
+nnet.model 
+plot(nnet.model)
+
+# Predict on training data
+pred.train.nnet.model = predict(nnet.model, newdata = train.sample)
+
+# Calculate the MSE and plot 
+nnet.train.mse = mean((pred.train.nnet.model - train.sample$log_int_tgt)^2)
+nnet.train.mse
+
+# Plot MSE
+plot(train.sample$log_int_tgt, pred.train.nnet.model, main = "Predictions vs Actual", xlab = "Actual", ylab = "Predictions", pch = 19, col = "blue")
+
+# Calculate the RMSE 
+nnet.train.rmse = RMSE(train.sample$log_int_tgt, pred.train.nnet.model)
+nnet.train.rmse
+
+# Model performance metrics
+data.frame(
+  RMSE = caret::RMSE(pred.train.nnet.model, train.sample$log_int_tgt),
+  Rsquare = caret::R2(pred.train.nnet.model, train.sample$log_int_tgt),
+  MSE = mean((pred.train.nnet.model - train.sample$log_int_tgt)^2)
+
+)
+
+# Predict on validation data
+pred.val.nnet.model = predict(nnet.model, newdata = val.sample)
+
+# Calculate the MSE and plot 
+nnet.val.mse = mean((pred.val.nnet.model - val.sample$log_int_tgt)^2) 
+nnet.val.mse
+
+# Plot MSE
+plot(val.sample$log_int_tgt, pred.val.nnet.model, main = "Predictions vs Actual", xlab = "Actual", ylab = "Predictions", pch = 19, col = "blue")
+
+# Calculate the RMSE 
+nnet.val.rmse = RMSE(val.sample$log_int_tgt, pred.val.nnet.model)
+nnet.val.rmse
+
+# Model performance metrics
+data.frame(
+  RMSE = caret::RMSE(pred.val.nnet.model, val.sample$log_int_tgt),
+  Rsquare = caret::R2(pred.val.nnet.model, val.sample$log_int_tgt),
+  MSE = mean((pred.val.nnet.model - val.sample$log_int_tgt)^2)
+)
+
+# Predict on test data
+pred.nnet.model = predict(nnet.model, newdata = test.sample)
+
+# Calculate the MSE and plot 
+nnet.mse = mean((pred.nnet.model - test.sample$log_int_tgt)^2) 
+nnet.mse
+
+# Plot MSE
+plot(test.sample$log_int_tgt, pred.nnet.model, main = "Predictions vs Actual", xlab = "Actual", ylab = "Predictions", pch = 19, col = "blue")
+
+# Calculate the RMSE 
+nnet.rmse = RMSE(test.sample$log_int_tgt, pred.nnet.model)
+nnet.rmse
+
+# Model performance metrics
+data.frame(
+  RMSE = caret::RMSE(pred.nnet.model, test.sample$log_int_tgt),
+  Rsquare = caret::R2(pred.nnet.model, test.sample$log_int_tgt),
+  MSE = mean((pred.nnet.model - test.sample$log_int_tgt)^2)
+)
+```
+
+# Prediction Model 3
+## Principal Component Regression
+Principal component regression is a dimension reduction technique that combines linear combinations of predictors to use in regression. . The principal component regression algorithm will be used to predict the interval of new sales in the bank data. The PCR approach replaces the original predictors with a smaller subset of principal components that are grouped by strong positive and negative correlations. 
+
+- A repeated 10 K fold cross validation technique was used to train the model. 
+
+- RMSE was used to select the optimal model using the smallest value.
+
+- The final value used for the model was ncomp = 15.
+
+- The first 3 components make up over half of the explained variance in the model 
+
+```{r}
+# Define train control params
+ctrlPCR = trainControl(method = "repeatedcv", 
+                     number = 10, 
+                     repeats=10,
+                     selectionFunction = "best",
+                     allowParallel=TRUE)
+
+# Train model on training data 
+tic()
+set.seed(4321)
+pcr.model = train(log_int_tgt ~ demog_homeval + demog_inc + demog_pr + rfm1 + rfm2 + rfm4 + rfm5 + rfm6 + rfm7 + rfm8 + rfm9 + rfm10 + rfm11 + rfm12 + cat_input1_X + cat_input1_Y + cat_input1_Z + cat_input2_A + cat_input2_B + cat_input2_C + cat_input2_D + cat_input2_E + demog_ho_yes + demog_genf_yes + demog_genm_yes,
+                data = train.sample, 
+                method = "pcr",
+                trControl = ctrlPCR,
+                tuneGrid=NULL,
+                na.action = "na.omit",
+                tuneLength=20)
+toc()
+# MODEL RUN TIME:  3.58 sec
+# RECORDS TRAINED: 3817
+
+# Model summary
+pcr.model 
+
+summary(pcr.model)
+
+# Predict on training data
+pred.train.pcr.model = predict(pcr.model, newdata = train.sample)
+
+# Calculate the MSE and plot 
+pcr.train.mse = mean((pred.train.pcr.model - train.sample$log_int_tgt)^2)
+pcr.train.mse
+
+# Plot MSE
+plot(train.sample$log_int_tgt, pred.train.pcr.model, main = "Predictions vs Actual", xlab = "Actual", ylab = "Predictions", pch = 19, col = "blue")
+
+# Calculate the RMSE 
+pcr.train.rmse = RMSE(train.sample$log_int_tgt, pred.train.pcr.model)
+pcr.train.rmse
+
+# Model performance metrics
+data.frame(
+  RMSE = caret::RMSE(pred.train.pcr.model, train.sample$log_int_tgt),
+  Rsquare = caret::R2(pred.train.pcr.model, train.sample$log_int_tgt),
+  MSE = mean((pred.train.pcr.model - train.sample$log_int_tgt)^2)
+
+)
+
+# Predict on validation data
+pred.val.pcr.model = predict(pcr.model, newdata = val.sample)
+
+# Calculate the MSE and plot 
+pcr.val.mse = mean((pred.val.pcr.model - val.sample$log_int_tgt)^2)
+pcr.val.mse
+
+# Plot MSE
+plot(val.sample$log_int_tgt, pred.val.pcr.model, main = "Predictions vs Actual", xlab = "Actual", ylab = "Predictions", pch = 19, col = "blue")
+
+# Calculate the RMSE 
+pcr.val.rmse = RMSE(val.sample$log_int_tgt, pred.val.pcr.model)
+pcr.val.rmse
+
+# Model performance metrics
+data.frame(
+  RMSE = caret::RMSE(pred.val.pcr.model, val.sample$log_int_tgt),
+  Rsquare = caret::R2(pred.val.pcr.model, val.sample$log_int_tgt),
+  MSE = mean((pred.val.pcr.model - val.sample$log_int_tgt)^2)
+)
+
+# Predict on test data
+pred.pcr.model = predict(pcr.model, newdata = test.sample)
+
+# Calculate the MSE and plot 
+pcr.mse = mean((pred.pcr.model - test.sample$log_int_tgt)^2)
+pcr.mse
+
+# Plot MSE
+plot(test.sample$log_int_tgt, pred.pcr.model, main = "Predictions vs Actual", xlab = "Actual", ylab = "Predictions", pch = 19, col = "blue")
+
+# Calculate the RMSE 
+pcr.rmse = RMSE(test.sample$log_int_tgt, pred.pcr.model)
+pcr.rmse
+
+# Model performance metrics
+data.frame(
+  RMSE = caret::RMSE(pred.pcr.model, test.sample$log_int_tgt),
+  Rsquare = caret::R2(pred.pcr.model, test.sample$log_int_tgt),
+  MSE = mean((pred.pcr.model - test.sample$log_int_tgt)^2)
+)
+```
+
+# Prediction Model 4
+## Random Forest
+Random forests use an ensemble learning method to average the many trees grown on bootstrap samples of the data. Random forests can be used for both prediction and classification problems. The random forest algorithm will be used to the interval of new sales in the bank data. 
+
+- A repeated 10 K fold cross validation technique was used to train the model. 
+
+- RMSE was used to select the optimal model using the smallest value.
+
+- The final value used for the model was mtry = 7 
+
+- Data: center and scaling 
+
+```{r}
+# Define train control params
+ctrlRF = trainControl(method = "repeatedcv", 
+                     number = 10, 
+                     repeats=10,
+                     selectionFunction = "best",
+                     allowParallel=TRUE)
+
+# Train model on training data 
+tic()
+set.seed(4321)
+rf.model = train(log_int_tgt ~ demog_homeval + demog_inc + demog_pr + rfm1 + rfm2 + rfm4 + rfm5 + rfm6 + rfm7 + rfm8 + rfm9 + rfm10 + rfm11 + rfm12 + cat_input1_X + cat_input1_Y + cat_input1_Z + cat_input2_A + cat_input2_B + cat_input2_C + cat_input2_D + cat_input2_E + demog_ho_yes + demog_genf_yes + demog_genm_yes,
+                data = train.sample, 
+                method = "rf",
+                trControl = ctrlRF,
+                tuneGrid=NULL,
+                na.action = "na.omit",
+                tuneLength=10)
+toc()
+# MODEL RUN TIME:  8316.76 sec
+# RECORDS TRAINED: 3817
+
+# Model summary
+rf.model 
+
+# Predict on training data
+pred.train.rf.model = predict(rf.model, newdata = train.sample)
+
+# Calculate the MSE and plot 
+rf.train.mse = mean((pred.train.rf.model - train.sample$log_int_tgt)^2)
+rf.train.mse
+
+# Plot MSE
+plot(train.sample$log_int_tgt, pred.train.rf.model, main = "Predictions vs Actual", xlab = "Actual", ylab = "Predictions", pch = 19, col = "blue")
+
+# Calculate the RMSE 
+rf.train.rmse = RMSE(train.sample$log_int_tgt, pred.train.rf.model)
+rf.train.rmse
+
+# Model performance metrics
+data.frame(
+  RMSE = caret::RMSE(pred.train.rf.model, train.sample$log_int_tgt),
+  Rsquare = caret::R2(pred.train.rf.model, train.sample$log_int_tgt),
+  MSE = mean((pred.train.rf.model - train.sample$log_int_tgt)^2)
+
+)
+
+# Predict on validation data
+pred.val.rf.model = predict(rf.model, newdata = val.sample)
+
+# Calculate the MSE and plot 
+rf.val.mse = mean((pred.val.rf.model - val.sample$log_int_tgt)^2)
+rf.val.mse
+
+# Plot MSE
+plot(val.sample$log_int_tgt, pred.val.rf.model, main = "Predictions vs Actual", xlab = "Actual", ylab = "Predictions", pch = 19, col = "blue")
+
+# Calculate the RMSE 
+rf.val.rmse = RMSE(val.sample$log_int_tgt, pred.val.rf.model)
+rf.val.rmse
+
+# Model performance metrics
+data.frame(
+  RMSE = caret::RMSE(pred.val.rf.model, val.sample$log_int_tgt),
+  Rsquare = caret::R2(pred.val.rf.model, val.sample$log_int_tgt),
+  MSE = mean((pred.val.rf.model - val.sample$log_int_tgt)^2)
+)
+
+# Predict on test data
+pred.rf.model = predict(rf.model, newdata = test.sample)
+
+# Calculate the MSE and plot 
+rf.mse = mean((pred.rf.model - test.sample$log_int_tgt)^2)
+rf.mse
+
+# Plot MSE
+plot(test.sample$log_int_tgt, pred.rf.model, main = "Predictions vs Actual", xlab = "Actual", ylab = "Predictions", pch = 19, col = "blue")
+
+# Calculate the RMSE 
+rf.rmse = RMSE(test.sample$log_int_tgt, pred.rf.model)
+rf.rmse
+
+# Model performance metrics
+data.frame(
+  RMSE = caret::RMSE(pred.rf.model, test.sample$log_int_tgt),
+  Rsquare = caret::R2(pred.rf.model, test.sample$log_int_tgt),
+  MSE = mean((pred.rf.model - test.sample$log_int_tgt)^2)
+)
+
+```
+
+
+# Prediction of Count of New Products
+
+# Prediction Model 1
+## Poisson Regression
+Poisson regression is generally used to model count data. The Poisson algorithm will be used to predict the number of new products in the bank data. Poisson regressions assume the response variable is a count that has a Poisson distribution. It performs similarly to logistic regression where the parameters are estimated by the maximum likelihood. 
+
+- RMSE was used to select the optimal model using the smallest value.
+
+- The statistically significant model variables are demog_homeval, rfm1, rfm2, rfm5, rfm7, rfm9, cat_input2_A, cat_input2_B, and cat_input2_C. 
+
+```{r}
+# Train model on training data 
+tic()
+set.seed(2020)
+poisson.model = glm(cnt_tgt ~ demog_homeval + demog_inc + demog_pr + rfm1 + rfm2 + rfm4 + rfm5 + rfm6 + rfm7 + rfm8 + rfm9 + rfm10 + rfm11 + rfm12 + cat_input1_X + cat_input1_Y + cat_input1_Z + cat_input2_A + cat_input2_B + cat_input2_C + cat_input2_D + cat_input2_E + demog_ho_yes + demog_genf_yes + demog_genm_yes, family="poisson", data=train.sample)
+warnings()
+toc()
+# MODEL RUN TIME:  1077.53 sec
+# RECORDS TRAINED: 3817
+poisson.model
+summary(poisson.model)
+
+
+library(sandwich)
+cov.poisson.model = vcovHC(poisson.model, type="HC0")
+std.err = sqrt(diag(cov.poisson.model))
+
+r.est = cbind(Estimate= coef(poisson.model), "Robust SE" = std.err,
+          "Pr(>|z|)" = 2 * pnorm(abs(coef(poisson.model)/std.err), lower.tail=FALSE),
+          LL = coef(poisson.model) - 1.96 * std.err,
+          UL = coef(poisson.model) + 1.96 * std.err)
+
+r.est
+
+with(poisson.model, cbind(res.deviance = deviance, df = df.residual,
+  p = pchisq(deviance, df.residual, lower.tail=FALSE)))
+
+
+# Predict on training data
+pred.train.poisson.model = predict(poisson.model, newdata = train.sample, type="response")
+
+# Model performance metrics
+data.frame(
+  RMSE = caret::RMSE(pred.train.poisson.model, train.sample$cnt_tgt),
+  Rsquare = caret::R2(pred.train.poisson.model, train.sample$cnt_tgt)
+)
+
+# Predict on validation data
+pred.val.poisson.model = predict(poisson.model, newdata = val.sample, type="response")
+pred.val.poisson.model
+
+# Model performance metrics
+data.frame(
+  RMSE = caret::RMSE(pred.val.poisson.model, val.sample$cnt_tgt),
+  Rsquare = caret::R2(pred.val.poisson.model, val.sample$cnt_tgt)
+)
+
+# Predict on test data
+pred.poisson.model = predict(poisson.model, newdata = test.sample, type="response")
+
+# Model performance metrics
+data.frame(
+  RMSE = caret::RMSE(pred.poisson.model, test.sample$cnt_tgt),
+  Rsquare = caret::R2(pred.poisson.model, test.sample$cnt_tgt)
+)
+```
+
+# Prediction Model 2
+## Negative Binomial 
+Negative binomial regression models are be used for over-dispersed count data, that is when the conditional variance exceeds the conditional mean. It can be considered as a generalization of Poisson regression since it has the same mean structure as Poisson regression and it has an extra parameter to model the over-dispersion. If the conditional distribution of the outcome variable is over-dispersed, the confidence intervals for Negative binomial regression are likely to be narrower as compared to those from a Poisson regression.
+
+- RMSE was used to select the optimal model using the smallest value.
+
+- The statistically significant model variables are demog_homeval, rfm2, rfm4, rfm5, rfm7, rfm9, cat_input2_A, cat_input2_B, and cat_input2_C. 
+
+```{r}
+# Train model on training data 
+tic()
+set.seed(2020)
+negbin.model = glm.nb(cnt_tgt ~ demog_homeval + demog_inc + demog_pr + rfm1 + rfm2 + rfm4 + rfm5 + rfm6 + rfm7 + rfm8 + rfm9 + rfm10 + rfm11 + rfm12 + cat_input1_X + cat_input1_Y + cat_input1_Z + cat_input2_A + cat_input2_B + cat_input2_C + cat_input2_D + cat_input2_E + demog_ho_yes + demog_genf_yes + demog_genm_yes, data=train.sample)
+toc()
+# MODEL RUN TIME:  1077.53 sec
+# RECORDS TRAINED: 3817
+negbin.model
+summary(negbin.model)
+
+# Predict on training data
+pred.train.nb.model = predict(negbin.model, newdata = train.sample, type="response")
+
+# Model performance metrics
+data.frame(
+  RMSE = caret::RMSE(pred.train.nb.model, train.sample$cnt_tgt),
+  Rsquare = caret::R2(pred.train.nb.model, train.sample$cnt_tgt)
+)
+
+# Predict on validation data
+pred.val.nb.model = predict(negbin.model, newdata = val.sample,  type="response")
+
+# Model performance metrics
+data.frame(
+  RMSE = caret::RMSE(pred.val.nb.model, val.sample$cnt_tgt),
+  Rsquare = caret::R2(pred.val.nb.model, val.sample$cnt_tgt)
+)
+
+# Predict on test data
+pred.nb.model = predict(negbin.model, newdata = test.sample,  type="response")
+
+# Model performance metrics
+data.frame(
+  RMSE = caret::RMSE(pred.nb.model, test.sample$cnt_tgt),
+  Rsquare = caret::R2(pred.nb.model, test.sample$cnt_tgt)
+)
+```
+
+# Prediction Model 3
+## Neural Network
+Neural networks are complex interconnected networks of neurons. Neural network architecture is often compared to the human brain and how it is structured to learn new information. The artificial neural network algorithm will be used to predict the number of new products in the bank data. Artificial neural networks are not only capable of modeling linear relationships but nonlinear relationships too. 
+
+- A repeated 10 K fold cross validation technique was used to train the model. 
+
+- RMSE was used to select the optimal model using the smallest value.
+
+- Decay: 0.5, 0.4, 0.3, 0.2, 0.1
+
+- Size: 1, 2, 3, 4, 5, 6
+
+- The final values used for the model where size = 2 and decay = 0.4.
+
+```{r}
+# Define train control params
+ctrlNN = trainControl(method = "repeatedcv", 
+                     number = 10, 
+                     repeats=10,
+                     selectionFunction = "best",
+                     allowParallel=TRUE)
+
+# Optimize the ANN hyperpameters and print the results
+mygrid = expand.grid(.decay = c(0.5, 0.4, 0.3, 0.2, 0.1), .size = c(1, 2, 3, 4, 5, 6))
+
+# Train model on training data 
+tic()
+set.seed(2020)
+nnet.model = train(cnt_tgt ~ demog_homeval + demog_inc + demog_pr + rfm1 + rfm2 + rfm4 + rfm5 + rfm6 + rfm7 + rfm8 + rfm9 + rfm10 + rfm11 + rfm12 + cat_input1_X + cat_input1_Y + cat_input1_Z + cat_input2_A + cat_input2_B + cat_input2_C + cat_input2_D + cat_input2_E + demog_ho_yes + demog_genf_yes + demog_genm_yes,
+                data = train.sample, 
+                method = "nnet",
+                trControl = ctrlNN,
+                tuneGrid=mygrid,
+                na.action = "na.omit",
+                tuneLength=10)
+toc()
+
+# MODEL RUN TIME:  857.92  sec
+# RECORDS TRAINED: 3817
+
+# Model summary
+nnet.model 
+
+summary(nnet.model)
+
+# Predict on training data
+pred.train.nnet.model = predict(nnet.model, newdata = train.sample)
+
+# Model performance metrics
+data.frame(
+  RMSE = caret::RMSE(pred.train.nnet.model, train.sample$cnt_tgt),
+  Rsquare = caret::R2(pred.train.nnet.model, train.sample$cnt_tgt)
+)
+
+# Predict on validation data
+pred.val.nnet.model = predict(nnet.model, newdata = val.sample)
+
+# Model performance metrics
+data.frame(
+  RMSE = caret::RMSE(pred.val.nnet.model, val.sample$cnt_tgt),
+  Rsquare = caret::R2(pred.val.nnet.model, val.sample$cnt_tgt)
+)
+
+# Predict on test data
+pred.nnet.model = predict(nnet.model, newdata = test.sample)
+
+# Model performance metrics
+data.frame(
+  RMSE = caret::RMSE(pred.nnet.model, test.sample$cnt_tgt),
+  Rsquare = caret::R2(pred.nnet.model, test.sample$cnt_tgt)
+)
+```
+
+# Prediction Model 4
+## Boosted Generalized Linear Model 
+Generalized linear models are a general class of linear models that are made up of a random component, systematic component, and a link function. The random component identifies the dependent variable and its distribution. The generalized linear model algorithm will be used to predict the number of new products in the bank data. GLM’s can be used for normally distributed response variables, binary responses, count data, and continuous data with skewed distributions and variation that can be modeled with a gamma distribution. 
+
+- A repeated 10 K fold cross validation technique was used to train the model. 
+
+- RMSE was used to select the optimal model using the smallest value.
+
+- The final values used for the model where mstop = 500 and prune = no.
+
+- Step size:  0.1
+
+- Offset:  0.3004978
+
+```{r}
+library(mboost)
+# Define train control params
+ctrlGLM = trainControl(method = "repeatedcv", 
+                     number = 10, 
+                     repeats=10,
+                     selectionFunction = "best",
+                     allowParallel=TRUE)
+
+# Train model on training data 
+tic()
+set.seed(2020)
+glm.model = train(cnt_tgt ~ demog_homeval + demog_inc + demog_pr + rfm1 + rfm2 + rfm4 + rfm5 + rfm6 + rfm7 + rfm8 + rfm9 + rfm10 + rfm11 + rfm12 + cat_input1_X + cat_input1_Y + cat_input1_Z + cat_input2_A + cat_input2_B + cat_input2_C + cat_input2_D + cat_input2_E + demog_ho_yes + demog_genf_yes + demog_genm_yes,
+                data = train.sample, 
+                method = "glmboost",
+                trControl = ctrlGLM,
+                tuneGrid=NULL,
+                na.action = "na.omit",
+                tuneLength=10)
+toc()
+# MODEL RUN TIME:  20.21 sec
+# RECORDS TRAINED: 3817
+
+# Model summary
+glm.model 
+summary(glm.model)
+
+# Predict on training data
+pred.train.glm.model = predict(glm.model, newdata = train.sample)
+
+# Model performance metrics
+data.frame(
+  RMSE = caret::RMSE(pred.train.glm.model, train.sample$cnt_tgt),
+  Rsquare = caret::R2(pred.train.glm.model, train.sample$cnt_tgt)
+)
+
+# Predict on validation data
+pred.val.glm.model = predict(glm.model, newdata = val.sample)
+
+# Model performance metrics
+data.frame(
+  RMSE = caret::RMSE(pred.val.glm.model, val.sample$cnt_tgt),
+  Rsquare = caret::R2(pred.val.glm.model, val.sample$cnt_tgt)
+)
+
+# Predict on test data
+pred.glm.model = predict(glm.model, newdata = test.sample)
+
+# Model performance metrics
+data.frame(
+  RMSE = caret::RMSE(pred.glm.model, test.sample$cnt_tgt),
+  Rsquare = caret::R2(pred.glm.model, test.sample$cnt_tgt)
+)
+```
