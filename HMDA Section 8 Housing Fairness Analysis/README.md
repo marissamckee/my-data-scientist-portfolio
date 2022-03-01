@@ -1,0 +1,37 @@
+# UNT_Capstone
+
+#### Course Description
+ADTA 5940 - Open to all student seeking an analytics capstone course. This unique learn-by-doing course is offered in lieu of a project, portfolio or thesis for candidates of the MS Advanced Data Analytics degree. Requires a significant project about which students periodically report, highlighting the interdisciplinary nature of their findings and its relevance to their interests and/or career goals. Students and peers discuss how their ongoing effort enriches and advances the human condition. Submission of a final paper and presentations are required for successful completion.This is a 10-week hybrid course offered during the summer and is designed as an individual study/project course. 
+
+#### Course Objectives
+  1. Demonstrate experimental design and sampling methodologies.
+  2. Demonstrate appropriate use of parametric and non-parametric tests.
+  3. Develop meaningful linear regression models
+  4. Integrate a variety of data analysis techniques and data collection processes based upon their project requirements. 
+  5. Use statistical software tools and programming applications to perform data analysis and effectively display the results. 
+  6. Apply concepts learned in Advanced Data Analytics courses to generate proposed solutions to a real case study. 
+
+## HUD Section 8 Housing Program Fairness Analysis
+With the modernization and advancement of technology in the world and within government agencies, we will see AI implemented more frequently. AI can be incredibly useful when implemented ethically. However, recent trends show AI may be bias.  
+The housing market has historically been biased within the United States. To understand if potential bias exists within the selected section 8 housing participants, I will create a ML model to predict individuals who have a section 8 housing voucher and will conduct a fairness assessment. The intent of this project is to detect if there is algorithmic or data bias that exists and mitigate it with debiasing techniques. 
+
+AI is widely used to deliver insights and make decisions. Therefore, it is necessary to remain cognizant of the impact AI has when it is only optimized for predictive performance. Embedding ethical and legal principles in design, training, and deployment of AI algorithms ensures social good while still harnessing the power of AI technology. 
+
+The world of AI remains highly unregulated. Without laws in place to protect users, customers, and citizens, it is up to leaders within AI to demand for the ethical development of algorithms. AI, up until recently, has been decision based and accuracy driven. However, with technology advancements the rule-based AI has been replaced with machine learning and probabilistic algorithms. 
+
+Machine learning makes inferences and learns from patterns in the data. While although there have been many advancements in AI, machine learning models are prone to biases and systematic unfairness whereby individuals or whole groups are treated disparately. Algorithmic bias has become an increasing problem in the age of rapid technology advancement. It is present in many situations where those who are affected remain unaware of its effects. 
+
+### HUD Section 8 Housing Program Fairness Analysis Summary
+The goal of this project was to detect bias by focusing on protected classes like race, sex, and other factors that could be proxies to protected attributes. From the EDA conducted on the HUD PUMS dataset, we saw that majority of tenants live well below the poverty line and affect female head of households disproportionately. My hypothesis was that based on historical evidence of discrimination towards minorities and women, that the model would display adverse outcomes against that part of the population. While although, there was not an overt gender or race impact in the model, there were other attributes that were adversely effected and potentially discriminated against. Tenants who live in extreme poverty and have very low income were overpredicted as being tenants of section 8 housing, when in reality they were not selected for the housing program. The model, while it predicted fairly, showed that the actual results were not fairly derived. 
+
+The year of 2020 was an anomaly. We changed our ways of living due to the pandemic. Many folks are working from home and many have lost their jobs. Public transportation and public businesses, like restaurants and stores, have changed how they operate from reduced to capacity to closing down completely. While although there has been an increasing need for affordable housing, I believe the effects of the pandemic may’ve affected the fairness assessment of the model. Bias may be undetected because of the recent climate of the economy and world state. The pandemic has been hard for everyone. I suspected the pandemic would hit minorities and women harder than other portions of the population. However, from the results of the fairness assessment, they were not disproportionately impacted as I originally hypothesized. 
+
+A fairness assessment may be better suited for housing data prior to the selection process of selecting section 8 prospects. There may be bias in the underlying way the government selects those who receive or don’t receive housing vouchers. This is data I could not find. However, based on the results of the bias identification phase, it  may be important to get an understanding of how candidates are selected. 
+
+There are various ways to assess and mitigate potential bias within AI algorithms and models. However, there are also many drawbacks to those solutions. Fairness within AI is an emerging topic and is not widely known. Assessing models for fairness and transparency is not a typical data scientist task. Many organizations do not see a need to invest in creating equitable algorithms because the effects bias AI has on marginalized groups can often times not be measured or even seen. Consider the following proposed solutions that can help aid organizations in creating equitable algorithms. 
+
+The use of ethical frameworks is not a new topic. However, within AI it is nothing but new. In fact, because there are not laws and regulations that limit how AI is used, it is imperative to identify the right set of fundamental ethical principles to inform the design, regulation, and use of AI and leverage it to benefit as well as respect individuals and societies. Organizations like consulting companies, the military, educators, tech companies, and government agencies are among the first to implement ethical frameworks. Many are very similar and all ethical frameworks have overlapping elements to bring trust into AI.  
+
+The use of open-source libraries like AIF360 ensures the availability of fairness techniques to everyone and all organizations. Open-source libraries also promote innovation and collaboration which are beneficial to organizations who apply such libraries. 
+
+The risk of producing biased prediction models due to unrepresentative datasets and other limitations during model development is higher than ever. Solving AI’s racial bias problem, along with other algorithmic bias, will not be easy or simple. Some experts have suggested that bias cannot ever be totally removed from AI. However, with the solutions to apply and create ethical frameworks, utilize open source libraries, and to use bias detection and mitigation techniques, the bias issues we face today in AI may be reduced.  

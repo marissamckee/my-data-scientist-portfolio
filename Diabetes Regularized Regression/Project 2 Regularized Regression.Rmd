@@ -1,0 +1,637 @@
+---
+title: "Project 2 - Regularized Regression"
+author: "Marissa McKee"
+date: "10/14/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Load necessary libraries 
+library(dplyr)
+library(e1071)
+library(ggplot2)
+library(lars)
+library(tidyverse)
+library(GGally)
+library(caret)
+library(leaps)
+library(glmnet)
+```
+
+In this project, I will use the diabetes data in Efron et al. (2003) to examine the effects of ten baseline predictor variables [age, sex, body mass index (bmi), average blood pressure (map), and six blood serum measurements (tc, ldl, hdl, tch, ltg, glu)] on a quantitative measure of disease progression one year after baseline.
+
+There are 442 diabetes patients in this data set. The data are available in the R package, lars. I will employ several machine learning techniques using the diabetes data to fit linear regression, ridge regression, and lasso models. 
+I will incorporate the best subset selection and cross validation techniques.
+
+#### More information about the diabetes dataset 
+```{r}
+# Uncomment for more information about the diabetes dataset
+#?diabetes
+```
+
+# Load the diabetes data
+```{r}
+data(diabetes)
+data.all <- data.frame(cbind(diabetes$x, y = diabetes$y))
+```
+
+The diabetes dataset has 442 observations and 10 predictor variables.
+```{r}
+dim(data.all) 
+```
+
+## Partition the patients into two groups: training (75%) and test (25%)
+```{r}
+# Set sample size
+n <-dim(data.all)[1] # sample size = 442
+
+# Set random number generator seed to enable repeatability of results
+set.seed(1306) 
+
+# Randomly sample 25% test
+test <- sample(n, round(n/4)) 
+
+# Split data by train and test sets
+data.train <- data.all[-test,]
+data.test <- data.all[test,]
+
+# Define predictor matrix
+x <- model.matrix(y ~ ., data = data.all)[,-1] 
+
+# Define training predictor matrix
+x.train <- x[-test,] 
+
+# Define test predictor matrix
+x.test <- x[test,]
+
+# Define response variable
+y <- data.all$y 
+
+# Define training response variable
+y.train <- y[-test] 
+
+# Define test response variable
+y.test <- y[test]
+
+# Training sample size = 332
+n.train <- dim(data.train)[1]
+
+# Test sample size = 110
+n.test <- dim(data.test)[1] 
+```
+
+# Data Quality Check 
+#### Preview the data
+```{r}
+# Preview the beginning of the dataset
+head(data.all)
+```
+
+#### Preview the feature names
+```{r}
+# Dataset columns
+names(data.all)
+```
+
+#### Preview the structure of the data
+```{r}
+# Structure of the dataset
+str(data.all)
+```
+
+#### Preview the summary statistics of the data
+```{r}
+# Summary statistics
+summary(data.all)
+```
+
+### Does the data quality check indicate that there are any data anomalies or features in the data that might cause issues in a statistical analysis?
+
+- From analyzing the scatter plots below, we can see BMI and LTG have a positive linear relationship with the dependent variable, y. 
+
+- There are also few outliers that could potentially skew the results but all outliers are within a range that's acceptable to keep in the analysis. 
+
+#### Age Scatter Plot
+```{r}
+# Age scatter plot
+ggplot(data = data.all, mapping = aes(x = age, y = y)) + 
+  geom_point()
+```
+
+#### Sex Scatter Plot
+```{r}
+# Sex scatter plot
+ggplot(data = data.all, mapping = aes(x = sex, y = y)) + 
+  geom_point()
+```
+
+#### BMI Scatter Plot
+```{r}
+# BMI scatter plot
+ggplot(data = data.all, mapping = aes(x = bmi, y = y)) + 
+  geom_point()
+```
+
+#### Map Scatter Plot
+```{r}
+# Map scatter plot
+ggplot(data = data.all, mapping = aes(x = map, y = y)) + 
+  geom_point()
+```
+
+#### TC Scatter Plot
+```{r}
+# TC scatter plot
+ggplot(data = data.all, mapping = aes(x = tc, y = y)) + 
+  geom_point()
+```
+
+#### LDL Scatter Plot
+```{r}
+# LDL scatter plot
+ggplot(data = data.all, mapping = aes(x = ldl, y = y)) + 
+  geom_point()
+```
+
+#### HDL Scatter Plot
+```{r}
+# HDL scatter plot
+ggplot(data = data.all, mapping = aes(x = hdl, y = y)) + 
+  geom_point()
+```
+
+#### TCH Scatter Plot
+```{r}
+# TCH scatter plot
+ggplot(data = data.all, mapping = aes(x = tch, y = y)) + 
+  geom_point()
+
+```
+
+#### LTG Scatter Plot
+```{r}
+# LTG scatter plot
+ggplot(data = data.all, mapping = aes(x = ltg, y = y)) + 
+  geom_point()
+```
+
+#### GLU Scatter Plot
+```{r}
+# GLU scatter plot
+ggplot(data = data.all, mapping = aes(x = glu, y = y)) + 
+  geom_point()
+
+```
+
+#### Histogram of the Dependent Variable y
+```{r}
+# Histogram of y
+hist(data.all$y, main = "Histogram of dependent variable, y",xlab = "Number", col="honeydew3")
+``` 
+
+Here we can see the dependent variable, y, is slightly skewed to the right. The skewness measure also validates this by the criterion below. 
+
+- If the skewness of the predictor variable is 0, the data is perfectly symmetrical,
+
+- If the skewness of the predictor variable is less than -1 or greater than +1, the data is highly skewed,
+
+- If the skewness of the predictor variable is between -1 and -0.5 or between +1 and +0.5 then the data is moderately skewed,
+
+- If the skewness of the predictor variable is -0.5 and +0.5, the data is approximately symmetric.
+```{r}
+# Check the skewness 
+skewness(data.all$y)
+
+```
+
+### A data quality check should begin with a description of the data. A table with the variable name, data type, and brief description is an effective way to describe a data set.
+```{r}
+# Generalized matrix of plots
+ggpairs(data.all)
+```
+
+### A data quality check should provide an overview of missing values and potential outliers. How do we detect outliers?
+
+- We can see there are no missing values. However there are several '0' values which could indicate null values were converted to numerical values previous to analysis. 
+```{r}
+# Check for missing values
+sum(is.na(data.all))
+```
+
+- We can determine outliers by using descriptive statistics. We saw there were a few outliers in the scatter plots above. Now we will look at box plots to see those outliers easier in a better visualization. 
+
+- We can also detect outliers by using histograms, percentiles, maximum, minimum, hampel filter, grubbs, dixon, and rosner tests but for this analysis will just be including box plots, descriptive summary statistics, and scatter plots. 
+
+#### Age Box Plot
+```{r}
+boxplot(data.all$age,
+        ylab="y",
+        main="Boxplot of Age and Diabetes")
+
+```
+
+#### Sex Box Plot
+```{r}
+# Sex Box Plot
+boxplot(data.all$sex,
+        ylab="y",
+        main="Boxplot of Sex and Diabetes")
+
+```
+
+#### BMI Box Plot
+```{r}
+# BMI Box Plot
+boxplot(data.all$bmi,
+        ylab="y",
+        main="Boxplot of BMI and Diabetes")
+ 
+```
+
+#### MAP Box Plot
+```{r}
+# MAP Box Plot
+boxplot(data.all$map,
+        ylab="y",
+        main="Boxplot of MAP and Diabetes")
+
+```
+
+#### TC Box Plot
+```{r}
+# TC Box Plot
+boxplot(data.all$tc,
+        ylab="y",
+        main="Boxplot of TC and Diabetes")
+
+
+```
+
+#### LDL Box Plot
+```{r}
+# LDL Box Plot
+boxplot(data.all$ldl,
+        ylab="y",
+        main="Boxplot of LDL and Diabetes")
+
+
+```
+
+#### HDL Box Plot
+```{r}
+# HDL Box Plot
+boxplot(data.all$hdl,
+        ylab="y",
+        main="Boxplot of HDL and Diabetes")
+
+
+```
+
+#### TCH Box Plot
+```{r}
+# TCH Box Plot
+boxplot(data.all$tch,
+        ylab="y",
+        main="Boxplot of TCH and Diabetes")
+
+
+```
+
+#### LTG Box Plot
+```{r}
+# LTG Box Plot
+boxplot(data.all$ltg,
+        ylab="y",
+        main="Boxplot of LTG and Diabetes")
+
+
+```
+
+#### GLU Box Plot
+```{r}
+# GLU Box Plot
+boxplot(data.all$glu,
+        ylab="y",
+        main="Boxplot of GLU and Diabetes")
+
+
+```
+
+# Exploratory Data Analysis
+## Correlation Matrix
+
+- The correlation matrix shows us the correlation between the features. There is multicollinearity among several variables. Multicollinearity occurs when there are high correlations between two or more predictor variables. This creates redundant information, skewing the results in a regression model. 
+```{r}
+# Define the correlation matrix
+#r <- rcorr(as.matrix(data.all[]))
+
+# Plot all features for the correlation matrix
+#corrplot(r$r, type='upper',method = "shade", shade.col = NA, p.mat=r$P, tl.col="black", tl.srt = 45,number.cex = 1,addCoef.col = 'blue', order='hclust',sig.level = 0.05, insig = c("pch"), diag = FALSE, col=colorRampPalette(c("deeppink","white","olivedrab2"))(200))
+
+```
+
+# Fit Models 
+## The primary objective of this section is to fit several models. 
+
+I will fit the following models to the training set:
+
+- Least squares regression model using all ten predictors
+  
+  - Apply best subset selection using BIS to select the number of predictors 
+  
+  - Apply best subset selection using a 10 fold cross validation to select the number of predictors
+
+- Ridge regression modeling using a 10 fold cross validation to select the largest value of lambda such that the cross validation error is within 1 standard error of the minimum
+
+- Lasso model using a 10 fold cross validation to select the largest value of lambda such that the cross validation error is within 1 standard error of the minimum
+
+For each model I will extract the model coefficient estimates from training set (not from re-running on the full data set), predict the responses for the test set, and calculate the “mean prediction error” (and its standard error) in the test set.
+
+# Least Squares Regression 
+## Use all ten predictors in the least squares regression model
+
+```{r}
+# Fit on training data
+lm.fit=lm(y~.,data=data.train)
+
+# Predict on test data
+lm.predict=predict(lm.fit, newdata = data.test)
+
+# Predict on test data
+mean((lm.predict-y.test)^2)
+
+# Model performance
+data.frame(
+  RMSE = RMSE(lm.predict, data.test$y),
+  R2 = R2(lm.predict, data.test$y))
+
+# Model summary
+summary(lm.fit)
+
+# Coefficient estimates
+coef(lm.fit,10)
+
+```
+
+# Best Subset Selection 
+## Apply best subset selection using BIC to select the number of predictors in the least squares regression model.
+
+- The regsubsets() function performs best subset selection by identifying the best model that contains a given number of predictors, where best is quantified using RSS. The syntax is the same as for lm(). The summary() command outputs the best set of variables for each model size.
+
+- Looking at the summary of the model, the asterisk indicates that a given variable is included in the corresponding model. For instance, this output indicates that the best two-variable model contains bmi and ltg. By default, regsubsets() only reports results up to the best eight variable model. But the nvmax option can be used in order to return as many variables as desired. Here I've fit up to all ten variables. 
+
+- The summary() function returns R squared, RSS, adjusted R squared, Cp, and BIC. We can examine these to try and select the best overall model.The which.min() function can be used to identify the location of the minimum point of a vector. We will use this to determine the best Cp and BIC statistics. 
+
+- Based on the BIC statistic, the best model will include fitting five variables. Those five variables include sex, bmi, map, hdl, and ltg. Using the coef() function we will be able to see the coefficient estimates associaed with the five variable model. 
+```{r}
+# Fit training data using the regsubsets() function
+regfit.full = regsubsets(y~.,data=data.train,nvmax=10)
+reg.summary = summary(regfit.full)
+
+# Model summary
+reg.summary
+names(reg.summary)
+reg.summary$rsq[5]
+
+# Plot the BIC vector
+plot(reg.summary$bic,xlab="Number of Variables",ylab="BIC")
+
+# Identify the model with the smallest BIC metric
+which.min(reg.summary$bic)
+
+# Plot the smallest BIC metric
+points(5,reg.summary$bic[5],pch=20,col="red")
+
+# Coefficient estimates
+coef(regfit.full,5)
+
+# Collect errors
+val.errors=rep(NA,10)
+
+# Predict on test data
+x.test=model.matrix(y~.,data=data.test)
+
+for(i in 1:10){
+  coefi=coef(regfit.full,id=i)
+  pred=x.test[,names(coefi)]%*%coefi
+  val.errors[i]=mean((data.test$y-pred)^2)
+}
+
+# Plot test RMSE values
+plot(sqrt(val.errors),ylab="RMSE",ylim=c(50,120),pch=19,type="b")
+
+# Plot training RMSE values
+points(sqrt(regfit.full$rss[-1]/180),col="blue",pch=19,type="b")
+
+# RMSE for 5 predictor model 
+names(regfit.full)
+
+# Add a legend to the plot 
+legend("topright",legend=c("Training","Validation"),col=c("blue","black"),pch=19)
+
+# Fit on training data
+lm.fit=lm(y~.,data=data.train[,c(2:4,7,9,11)])
+
+# Predict on test data
+lm.predict=predict(lm.fit, newdata = data.test[,c(2:4,7,9,11)])
+
+# Predict on test data
+mean((lm.predict-y.test)^2)
+
+# Model performance
+data.frame(
+  RMSE = RMSE(lm.predict, data.test$y),
+  R2 = R2(lm.predict, data.test$y))
+
+# Model summary
+summary(lm.fit)
+
+# Coefficient estimates
+coef(lm.fit,10)
+```
+
+## Re-Partition the patients into two groups: training (75%) and test (25%)
+```{r}
+# Set sample size
+n <-dim(data.all)[1] # sample size = 442
+
+# Set random number generator seed to enable repeatability of results
+set.seed(1306) 
+
+# Randomly sample 25% test
+test <- sample(n, round(n/4)) 
+
+# Split data by train and test sets
+data.train <- data.all[-test,]
+data.test <- data.all[test,]
+
+# Define predictor matrix
+x <- model.matrix(y ~ ., data = data.all)[,-1] 
+
+# Define training predictor matrix
+x.train <- x[-test,] 
+
+# Define test predictor matrix
+x.test <- x[test,]
+
+# Define response variable
+y <- data.all$y 
+
+# Define training response variable
+y.train <- y[-test] 
+
+# Define test response variable
+y.test <- y[test]
+
+# Training sample size = 332
+n.train <- dim(data.train)[1]
+
+# Test sample size = 110
+n.test <- dim(data.test)[1] 
+```
+# Best Subset Selection 
+## Apply best subset selection using a 10 fold cross validation to select the number of predictors in the least squares regression model. 
+
+```{r}
+# Set seed
+set.seed(5410)
+
+# Define folds
+folds = sample(1:10,nrow(data.train),replace=TRUE)
+#folds
+
+# Set K folds to 10 
+k=10
+
+# Create errors matrix 
+cv.errors=matrix(NA,k,10,dimnames=list(NULL,paste(1:10)))
+
+# 10 fold cross validation 
+for (j in 1:k){
+  best.fit=lm(y~.,data=data.train[folds==j,],nvmax=10)
+  # Loop through predictor values 
+  for(i in 1:10){
+    pred=predict(best.fit, data.train[folds==j,],id=i)
+    cv.errors[j,i]=mean((data.train$y[folds==j]-pred)^2)
+  }
+}
+
+# MSE per model
+mean.cv.errors=apply(cv.errors,2,mean)
+
+# MSE matrix shows 10 predictor values has lowest error rate
+mean.cv.errors
+
+# Plot the errors per predictors
+plot(mean.cv.errors,type="b") 
+
+# Fit model on training data
+reg.best=lm(y~.,data=data.train)
+
+#Model summary
+summary(reg.best)
+
+# Coefficient estimates 
+coef(reg.best,10)
+
+# Predict on test data
+reg.predict=predict(reg.best, newdata = data.test,nvmax=10)
+
+# Predict on test data
+mean((reg.predict-y.test)^2)
+
+# Model performance
+data.frame(
+  RMSE = RMSE(reg.predict, data.test$y),
+  R2 = R2(reg.predict, data.test$y))
+
+```
+
+# Ridge Regression 
+## Implement a ridge regression model using a 10 fold cross validation to select the largest value of lambda such that the cross validation error is within 1 standard error of the minimum.
+
+- glmnet() can be used to fit ridge regression models. It has an alpha argument that determines what type of model is fit. If alpha=0 then a ridge regression model is fit, and if alpha=1 then a lasso model is fit. By defualt the glmnet() function performs a ridge regression. However, here we have chosen to implement the function over a grid of values essentially covering the full range of scenarios from the null model containing only the intercept, to the least squares fit.
+
+  - By default the glmnet() function standardizes variables so that they are on the same scale.  
+
+- We must pass in an x matrix as well as a y vector. the model.matrix() function is particularly useful for creating x. Not only does it produce a matrix corresponding to the 10 predictors but it also automatically transforms any qualitative variables into dummy variables. 
+
+- Associated with each value of lambda is a vector of ridge regression coefficients stored in a matrix that can be accessed by the coef() function. We expect the coefficient eastimates to be much smaller, in terms of l2 norm, when a large value of lambda is used, as compared to when a small value of lambda is used. 
+
+- The cv.glmnet() function is a built in cross validation method. By default the function performs a ten fold cross validation, though this can be changed using the nfolds argument. 
+```{r}
+# set seed
+set.seed(5410)
+
+grid = 10^seq(10, -2, length = 100)
+
+# Create 10 fold cross validation 
+cv.out = cv.glmnet(x.train,y.train,alpha=0)
+
+# Plot mean squared errors
+plot(cv.out)
+
+# Choose best lambda value
+bestlam = cv.out$lambda.min
+bestlam
+
+# Fit ridge regression on training data
+ridge.mod = glmnet(x,y,alpha = 0, lambda = grid)
+
+# Predict ridge regression on test data
+ridge.pred = predict(ridge.mod,s=bestlam,newx=x.test)
+
+# Evaluate ridge regression MSE on test data
+mean((ridge.pred-y.test)^2)
+
+# Retrieve coefficients
+predict(ridge.mod,type="coefficients",s=bestlam)
+
+# Model performance
+data.frame(
+  RMSE = RMSE(ridge.pred, data.test$y),
+  R2 = R2(ridge.pred, data.test$y))
+```
+
+# Lasso Model 
+## Implement a lasso model using a 10 fold cross validation to select the largest value of lambda such that the cross validation error is within 1 standard error of the minimum.
+
+- glmnet() can be used to fit lasso regression models. As mentioned previously, the glmnet() function has an alpha argument that determines what type of model is fit. If alpha=0 then a ridge regression model is fit, and if alpha=1 then a lasso model is fit. 
+
+```{r}
+# Set seed
+set.seed(5410)
+
+grid = 10^seq(10, -2, length = 100)
+
+lasso.mod = glmnet(x,y, alpha = 1, lambda = grid)
+
+# Create a 10 fold cross validation 
+cv.out = cv.glmnet(x.train,y.train,alpha=1)
+
+# Plot the mean squared errors 
+plot(cv.out)
+
+# Choose th ebest lambda value
+bestlam = cv.out$lambda.min
+bestlam
+
+# Predict on test data
+lasso.pred = predict(lasso.mod, s=bestlam, newx=x.test)
+
+# Mean prediction error
+mean((lasso.pred-y.test)^2)
+
+# Retrieve coefficients
+predict(lasso.mod,type="coefficients",s=bestlam)
+
+# Model performance
+data.frame(
+  RMSE = RMSE(lasso.pred, data.test$y),
+  R2 = R2(lasso.pred, data.test$y))
+
+```

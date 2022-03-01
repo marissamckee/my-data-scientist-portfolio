@@ -1,0 +1,370 @@
+---
+title: "Classification Models - Project 3"
+author: "Marissa McKee"
+date: "11/22/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#### Load R Libraries 
+```{r}
+library(janitor)
+library(caret)
+library(e1071)
+library(randomForest)
+library(rpart)
+library(rpart.plot)
+library(rattle)
+library(rcompanion)
+library(MASS)
+library(earth)
+library(ggplot2)
+library(corrplot)
+library(Hmisc)
+```
+
+# Import Spambase Dataset
+The data for this assignment is the ‘Spambase’ data set. The data must be downloaded from the UC Irvine Machine Learning Repository. The data will need to be read into R using the function read.csv().
+https://archive.ics.uci.edu/ml/datasets/Spambase
+
+A description of the data and the statistical problem can be found on the author’s website.
+http://lorrie.cranor.org/pubs/spam/spam.html
+```{r}
+url ='http://archive.ics.uci.edu/ml/machine-learning-databases/spambase/spambase.zip'
+temp = tempfile()
+download.file(url,temp, mode="wb")
+unzip(zipfile=temp, exdir = './l1')
+
+setwd('l1')
+sbase = read.table("spambase.data", sep=",")
+cnames = read.table("spambase.names", comment.char="|", header=F)[1]
+cnames = gsub("[[:punct:]]", "", as.matrix(cnames))
+cnames = c(cnames[c(2:nrow(cnames))],"target")
+colnames(sbase) = cnames
+
+# There are multiple repeated col names 
+names(sbase)
+
+# Clean up column names with janitor library
+spam = janitor::clean_names(sbase)
+names(spam)
+```
+
+# Data Quality Check and Preparation 
+#### Data Quality Check:
+The first step in any data analysis project is a data quality check. Some people refer to this data quality check as ‘Exploratory Data Analysis’ (EDA), however true EDA is much more than a data quality check. Instead, a data quality check is exactly what it sounds like – a quick summary of the values of your data. This summary could be tabular or graphical, but in general we want to know the value ranges, the shape of the distributions, and the number of missing values for each variable in our data set. The purpose of a data quality check is for the user to get to know the data. In practice one will seldom be given a data dictionary and the corresponding data summaries. You, or a team member, will always have to perform this step as a means of ‘inventory’ to see what you have.
+
+- Does the data quality check indicate that there are any data anomalies or features in the data that might cause issues in a statistical analysis?
+
+- A data quality check should begin with a description of the data. A table with the variable name, data type, and brief description is an effective way to describe a data set.
+
+- A data quality check should provide an overview of missing values and potential outliers. How do we detect outliers?
+
+- Use tables when needed. Do not simply cut and paste R output.
+
+```{r}
+# 4601 records 58 columns
+dim(spam)
+
+# All variables are numerical/integer data types
+str(spam)
+
+# Based on DD, the target variable should be cast as a factor
+spam$target <- as.factor(spam$target)
+
+# Descriptive statistics 
+summary(spam)
+
+# No null values 
+sum(is.na(spam))
+
+# Check data types - target variable looks good
+str(spam)
+```
+
+# Split Data into Training and Testing Sets
+In this problem we will use a 70/30 training-testing split of the data. You will split your data into the two separate data sets, and then use the training data sets for all of your model development and the testing data set to evaluate each of your models out-of-sample.Now begin to fit your model suite. 
+```{r}
+# Define misclassification function
+misclass = function(fit,y) {
+  temp <- table(fit,y)
+  cat("Table of Misclassification\n")
+  cat("(row = predicted, col = actual)\n")
+  print(temp)
+  cat("\n\n")
+  numcor <- sum(diag(temp))
+  numinc <- length(y) - numcor
+  mcr <- numinc/length(y)
+  cat(paste("Misclassification Rate = ",format(mcr,digits=3)))
+  cat("\n")
+}
+
+# 4601 records to split into train/test 0.70/0.30
+dim(spam)
+
+# Split data into training and testing sets
+sam = sample(1:4601,floor(.7*4601),replace=F)
+spam.train = spam[sam,] 
+spam.test = spam[-sam,] 
+
+# Train dimension
+dim(spam.train)
+
+# Test dimension 
+dim(spam.test)
+
+# make sure all areas are in training cases
+table(spam.train$target)
+
+# make sure all areas are represented in test cases
+table(spam.test$target)  
+```
+
+## Outlier Detection
+Declaring an observation as an outlier based on a just one (rather unimportant) feature could lead to unrealistic inferences. When you have to decide if an individual entity (represented by row or observation) is an extreme value or not, it better to collectively consider the features (X’s) that matter.
+
+Predictive algorithms are used in this project that can be heavily skewed by outliers. Instead of throwing out outliers, I will use the preprocess function to center and scale values in order to normalize the independent variables. 
+```{r}
+# Many of the independent variables have several outliers - small example below 
+outlier_values <- boxplot.stats(spam$wordfreqmake)$out 
+outlier_values
+
+outlier_values <- boxplot.stats(spam$wordfreqdata)$out 
+outlier_values
+
+outlier_values <- boxplot.stats(spam$wordfreqlabs)$out 
+outlier_values
+
+# Center and scale the data 
+preProcValues <- preProcess(spam, method = c("center", "scale"))
+
+# Apply the centering and scaling to the train and test datasets 
+spam.train <- predict(preProcValues, spam.train)
+spam.test <- predict(preProcValues, spam.test)
+```
+
+# Exploratory Data Analysis 
+After we have performed a data quality check and determined that we have the correct data, we can then begin to analyze our data and glean information from it. The primary purpose of EDA is to look 2 for interesting relationships in the data. While we are performing our EDA, we will uncover many uninteresting relationships in our data. As a matter of good practice, we typically store these uninteresting relationships in documentation for our own personal use, but we do not report the uninteresting relationships. Reporting uninteresting relationships distracts us and our audience from the more important details. 
+
+The format and structure of your EDA is determined by your statistical problem, which in turn is determined by your data. When you are performing, or designing, an exploratory data analysis, you will need to answer the following questions to make sure that you are performing an effective EDA. You want to use EDA to frame your statistical problem. 
+
+- What type of statistical problem do you have? Is it a regression problem or a classification problem?
+
+- What types of EDA are appropriate for this statistical problem? The correct EDA for a regression problem is significantly different from the correct EDA for a classification problem.
+
+- What interesting relationships do you find? How can these relationships be used to build a statistical model?
+
+- Fit a tree model to the data and use the results for exploratory insights.
+
+```{r}
+# Correlation Matrix
+cor(spam[,1:57])
+
+# Correlation Matrix visualization 
+r <- rcorr(as.matrix(spam[,1:57]))
+corrplot(r$r, type='upper',method = "shade", shade.col = NA, p.mat=r$P, tl.col="black", tl.srt = 45,number.cex = 1, order='hclust',sig.level = 0.05, insig = c("pch"), diag = FALSE, col=colorRampPalette(c("deeppink","white","olivedrab2"))(200))
+
+plot(spam$target)
+
+names(spam)
+
+ggplot(data = spam, mapping = aes(x = wordfreqaddresses, y = target)) + 
+  geom_point()
+```
+
+# Modeling
+In this course we are always working within the learning paradigm. That means that we will always be interested in the predictive accuracy of our models, and hence we will always be using some form of cross-validation to evaluate our models.
+
+Fit the following models:
+
+- A. a linear or quadratic discriminant analysis (LDA/QDA)
+
+- B. a tree model
+
+- C. a Support Vector Machine
+
+- D. Random Forest
+
+Each of your models should have its own subsection in your report. Evaluate each of the goodness-of-fit for each of these models if applicable. Use tables when needed. Do not simply paste R output into your report.
+
+# Linear Discriminant Analysis Model 
+#### Discriminant Analysis 
+Discriminant analysis of two or more groups can be conducted for one of several purposes:
+
+- Visualization of group separation 
+
+- Identification of a subset of variables that separates the groups 
+
+- Interpretation of new axes defined by discriminant functions 
+
+- Extension of other multivariate analysis 
+
+Discriminant analysis starts with the assumption that there are different groups 
+
+- Discriminant functions are calculated to best separate the groups
+
+- Linear discriminant functions are linear combinations of the data 
+
+- These linear combinations can be used to predict groups when group membership is not known
+
+Goals for discriminant analysis
+
+- Discrimination: How are the groups different? Find and interpret linear combinations of variables that optimally predict group differences 
+
+- Classification: How accurately can observations be classified into groups? Use functions of variables to predict group membership for a data set and evaluate expected error rates
+
+#### Model explanation: 
+Linear Discriminant Analysis
+
+- Linear discriminant analysis is much less flexbile than quadratic discriminant analysis – low variance 
+
+- Linear discriminant analysis can lead to poor estimates of the boundary between groups – high bias
+
+- If the sample size of the training set is high enough to support estimation of the separate covariance matrices quadratic discriminant analysis is preferred 
+
+- With k groups and p variables, the number of covariances to be estimate is kp(p+1)/2
+
+
+```{r}
+# Fit LDA model on training data 
+spam.lda = lda(target~.,data=spam.train)
+summary(spam.lda)
+
+# Predict on the training set
+yfit = predict(spam.lda,newdata=spam.train)
+attributes(yfit)
+summary(yfit)
+
+# Call the misclass function to calculate the misclassification rate 
+misclass(yfit$class,spam.train$target)
+
+# Predict on testing set  
+ypred = predict(spam.lda,newdata=spam.test)
+misclass(ypred$class,spam.test$target)
+
+# Add results to compare against QDA
+lda.misclass=misclass(ypred$class,spam.test$target)
+```
+
+# Quadratic Discriminant Analysis Model 
+#### Model explanation:
+Quadratic Discriminant Analysis
+
+- QDA is not much different from LDA except you assume that the covariance matrix can be different for each class
+
+- Qda because it allows for more flexibility for the covariance matrix, tends to fit the data better than lda, but then it has more parameters to estimate 
+
+- The number of parameters increases significantly with qda because of the separate covariance matrix for every class. If we have many classes and not so many sample points this can be a problem 
+
+- As a result there are trade offs between fitting the training data well and having a simple model work with
+
+- A simple model sometimes fits the data just as well as a complicated model
+
+- Even if the simple model does not fit the training data as well as a complex model it still might be better on the test data because its more robust 
+
+```{r}
+# Fit a QDA on training data
+spam.qda = qda(target~.,data=spam.train)
+
+# Prediction on training data
+yfit = predict(spam.qda,newdata=spam.train)
+attributes(yfit)
+
+# Call the misclassification function to calculate the misclassification rate 
+misclass(yfit$class,spam.train$target)
+
+# Predict on testing set 
+ypred = predict(spam.qda,newdata=spam.test)
+misclass(ypred$class,spam.test$target)
+
+# Add results to compare against LDA
+qda.misclass=misclass(ypred$class,spam.test$target)
+```
+
+# Decision Tree Model 
+#### Model explanation:
+Classification trees
+
+- Classification trees are a hierarchical way of partitioning the space
+
+- We start with the entire space and recursively divide it into smaller regions
+
+- At the end every region is assigned with a class label 
+
+- One big advantage for decision trees is that the classifier generated is highly interpretable. This is an especially desirable feature
+
+```{r}
+# Fit a Decision tree to the training data
+spam.rpart = rpart(target~.,data=spam.train)
+plot(spam.rpart)
+text(spam.rpart)
+fancyRpartPlot(spam.rpart)
+
+# Predict on training data
+yfit = predict(spam.rpart,newdata=spam.train,type="class")
+misclass(yfit,spam.train$target)
+
+# Decision tree 
+spam.rpart
+
+# Predict on testing set 
+yhat.spam = predict(spam.rpart,newdata=spam.test,type="class")
+plot(yhat.spam)
+misclass(yhat.spam,spam.test$target)
+
+# Add results to compare against other models 
+dt.misclass=misclass(yhat.spam,spam.test$target)
+```
+
+# Support Vector Machine Model 
+#### Model explanation:
+The support vector machine model is a popular supervised machine learning algorithm used for both classification and regression tasks. The objective of the SVM algorithm is to identify a hyperplane in a dimensional space that classifies the data points. Hyperplanes are decision boundaries that classify the data. Support vectors are data points that are close to the hyperplane, which influences the position and orientation of the hyperplane. 
+```{r}
+# Fit SVM model on training set
+spam.svm = svm(target~.,data=spam.train)
+
+# Call the misclass function to calculate the misclassification rate on training data
+misclass(fitted(spam.svm),spam.train$target)
+
+# Summary of fitted model 
+summary(spam.svm)
+attributes(spam.svm)
+
+# Predict on test set
+ypred = predict(spam.svm,newdata=spam.test)
+
+# Call the misclass function to calculate the misclassification rate
+misclass(ypred,spam.test$target)
+```
+
+# Random Forest Model 
+#### Model explanation:
+The random forest model is an ensemble method. The model considers only a subset of the data for growing the tree at each step. Random forests are based on the bagging algorithm and use ensemble learning, which reduces overfitting. Ensemble learning also reduces the variance and therefore improves the accuracy. Bagging is a term for averaging many trees grown on bootstrap samples of the training data. All inputs are considered for splitting at every step. Random forests uses bootstrap sampling of the rows but considers splitting only on a random sample of the columns at each step. Instead of searching for the best features among a random subset of features, random forests add extra randomness when growing trees. 
+
+The random forest model is used to solve both classification and regression problems and is very accurate in terms of predicting continuous variables. Random forests can handle missing values, is robust to outliers, can handle nonlinear parameters and nonnormalized data, and the algorithm is less impacted by noisy data. However, random forests are complex and can be a black box. Random forests also need more training computational power, as the model generates a lot of trees. 
+
+```{r}
+#Random forest
+spam.rf = randomForest(target~.,data=spam.train, importance=T)
+
+# Model Summary
+spam.rf
+
+# Prediction on training data
+yfit = predict(spam.rf,newdata=spam.train)
+
+# Call the misclassification function to calculate the misclassification rate 
+misclass(yfit,spam.train$target)
+
+# Predict on testing set 
+ypred = predict(spam.rf,newdata=spam.test)
+misclass(ypred,spam.test$target)
+
+# Add results to compare against other models 
+rf.misclass=misclass(ypred,spam.test$target)
+
+
+```
