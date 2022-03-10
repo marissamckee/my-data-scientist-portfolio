@@ -30,6 +30,8 @@ On average 4,318,515 tests are positive, 3,790,848 people test positive, and 3,8
 
 The distribution of the tests_combined_total variable suggests the data is skewed to the right. When data is skewed right, the mean is larger than the median. The histogram and density plot display a pareto distribution and the mean is larger than the median. The average amount of total tests combined for the population equates to 5,424,406 tests. The median amount of total tests combined for the population equates to 1,845,335 tests.
 
+The state of California, New York, Florida, Texas, Illinois, and Massachusetts rank as having on average the most total tests combined. This result is somewhat expected as several of these states have the largest populations in the nation. 
+
 #### Data Preparation and New York Exploration
 The data contains 654 records and 14 features. A considerably smaller amount of memory is being used for the New York Data. 76.6 KB are allocated for memory of this data. The variables tests_viral_positive, tests_viral_negative, tests_viral_total, people_viral_total, people_antigen_positive, and people_antigen_total are missing 100% of values. 
 
